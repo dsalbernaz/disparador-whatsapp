@@ -188,7 +188,7 @@
 </div>
 
 <script>
-  const SENHA = '579500';
+  const SENHA_HASH = "5b8a6193045d7835712c63546e0f91dbb98cc9d80caf332300c23c7c8921c710";
   const N8N_BASE = 'https://crepusculargreatwhiteshark-n8n.cloudfy.live/webhook';
   const WEBHOOK_TEMPLATES = `${N8N_BASE}/buscar-templates`;
   const WEBHOOK_DISPARO   = `${N8N_BASE}/disparador-oficial`;
@@ -196,10 +196,16 @@
   let listaContatos = [];
   let templatesCache = [];
 
-  function fazerLogin() {
+  async function checarSenha(val) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(val));
+    const hash = Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,"0")).join("");
+    return hash === SENHA_HASH;
+  }
+
+  async function fazerLogin() {
     const val = document.getElementById('senha-input').value;
     const err = document.getElementById('login-error');
-    if (val === SENHA) {
+    if (await checarSenha(val)) {
       document.getElementById('login-screen').style.display = 'none';
       document.getElementById('app-screen').style.display = 'block';
       carregarTemplates();
