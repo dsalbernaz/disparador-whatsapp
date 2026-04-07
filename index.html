@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Disparador WhatsApp — OC332</title>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0f; --surface: #13131a; --surface2: #1c1c27; --border: #2a2a3a;
+      --green: #25d366; --red: #ff4d4d; --yellow: #f5c542; --text: #e8e8f0;
+      --muted: #6b6b85; --accent: #7c6bff;
+    }
+    body {
+      background: var(--bg); color: var(--text); font-family: 'Syne', sans-serif;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+      background-image: radial-gradient(ellipse at 20% 50%, rgba(124,107,255,0.05) 0%, transparent 60%),
+                        radial-gradient(ellipse at 80% 20%, rgba(37,211,102,0.04) 0%, transparent 50%);
+    }
+    #login-screen { width: 100%; max-width: 400px; animation: fadeUp 0.4s ease; }
+    .logo-mark { display: flex; align-items: center; gap: 12px; margin-bottom: 40px; }
+    .logo-icon { width: 44px; height: 44px; background: var(--green); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 22px; }
+    .logo-text { font-size: 18px; font-weight: 800; letter-spacing: -0.5px; }
+    .logo-text span { color: var(--green); }
+    .login-card { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 36px; }
+    .login-card h1 { font-size: 24px; font-weight: 800; margin-bottom: 6px; }
+    .login-card p { color: var(--muted); font-size: 14px; margin-bottom: 28px; font-family: 'DM Mono', monospace; }
+    .field-group { position: relative; margin-bottom: 16px; }
+    .field-group label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+    .field-group input, .field-group select { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; color: var(--text); font-family: 'DM Mono', monospace; font-size: 14px; outline: none; transition: border-color 0.2s; }
+    .field-group input:focus, .field-group select:focus { border-color: var(--accent); }
+    .field-group select option { background: var(--surface2); }
+    .btn { width: 100%; padding: 14px; border: none; border-radius: 10px; font-family: 'Syne', sans-serif; font-size: 15px; font-weight: 700; cursor: pointer; transition: all 0.2s; letter-spacing: 0.3px; }
+    .btn-primary { background: var(--green); color: #000; }
+    .btn-primary:hover { background: #1fba58; transform: translateY(-1px); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+    .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); margin-top: 10px; }
+    .btn-secondary:hover { border-color: var(--accent); }
+    .error-msg { color: var(--red); font-size: 13px; font-family: 'DM Mono', monospace; margin-top: 12px; display: none; }
+    #app-screen { display: none; width: 100%; max-width: 780px; animation: fadeUp 0.4s ease; }
+    .app-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 32px; }
+    .app-header .logo-mark { margin-bottom: 0; }
+    .logout-btn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 8px 16px; border-radius: 8px; font-family: 'Syne', sans-serif; font-size: 13px; cursor: pointer; transition: all 0.2s; }
+    .logout-btn:hover { border-color: var(--red); color: var(--red); }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 28px; margin-bottom: 20px; }
+    .card-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: var(--muted); margin-bottom: 20px; display: flex; align-items: center; gap: 8px; }
+    .card-title::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+    .upload-zone { border: 2px dashed var(--border); border-radius: 12px; padding: 32px; text-align: center; cursor: pointer; transition: all 0.2s; position: relative; }
+    .upload-zone:hover, .upload-zone.dragover { border-color: var(--green); background: rgba(37,211,102,0.04); }
+    .upload-zone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; }
+    .upload-icon { font-size: 32px; margin-bottom: 10px; }
+    .upload-zone p { color: var(--muted); font-size: 14px; font-family: 'DM Mono', monospace; }
+    .upload-zone strong { color: var(--text); }
+    .file-loaded { display: none; align-items: center; gap: 12px; background: rgba(37,211,102,0.08); border: 1px solid rgba(37,211,102,0.3); border-radius: 10px; padding: 14px 18px; margin-top: 12px; }
+    .file-loaded.show { display: flex; }
+    .file-loaded .file-info { flex: 1; }
+    .file-loaded .file-name { font-size: 14px; font-weight: 600; font-family: 'DM Mono', monospace; }
+    .file-loaded .file-count { font-size: 12px; color: var(--green); font-family: 'DM Mono', monospace; }
+    .file-loaded .remove-file { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 18px; padding: 0 4px; transition: color 0.2s; }
+    .file-loaded .remove-file:hover { color: var(--red); }
+    .template-row { display: flex; gap: 12px; align-items: flex-end; }
+    .template-row .field-group { flex: 1; margin-bottom: 0; }
+    .refresh-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); width: 44px; height: 44px; border-radius: 10px; cursor: pointer; font-size: 16px; transition: all 0.2s; flex-shrink: 0; }
+    .refresh-btn:hover { border-color: var(--accent); color: var(--accent); }
+    .refresh-btn.spinning { animation: spin 1s linear infinite; }
+    .template-preview { margin-top: 12px; background: var(--surface2); border-radius: 10px; padding: 14px 16px; font-size: 13px; font-family: 'DM Mono', monospace; color: var(--muted); display: none; }
+    .template-preview.show { display: block; }
+    .template-preview .tpl-name { color: var(--green); font-weight: 500; }
+    .template-preview .tpl-lang { color: var(--accent); }
+    .disparo-btn { width: 100%; padding: 18px; background: var(--green); color: #000; border: none; border-radius: 14px; font-family: 'Syne', sans-serif; font-size: 17px; font-weight: 800; cursor: pointer; transition: all 0.2s; letter-spacing: 0.5px; display: flex; align-items: center; justify-content: center; gap: 10px; }
+    .disparo-btn:hover:not(:disabled) { background: #1fba58; transform: translateY(-2px); box-shadow: 0 8px 24px rgba(37,211,102,0.25); }
+    .disparo-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; box-shadow: none; }
+    .progress-wrap { display: none; margin-top: 16px; }
+    .progress-wrap.show { display: block; }
+    .progress-bar-bg { background: var(--surface2); border-radius: 999px; height: 6px; overflow: hidden; margin-bottom: 8px; }
+    .progress-bar-fill { height: 100%; background: var(--green); border-radius: 999px; width: 0%; transition: width 0.3s ease; }
+    .progress-label { font-size: 12px; font-family: 'DM Mono', monospace; color: var(--muted); text-align: center; }
+    #resumo-card { display: none; }
+    #resumo-card.show { display: block; }
+    .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 20px; }
+    .stat-box { background: var(--surface2); border-radius: 14px; padding: 20px; text-align: center; border: 1px solid var(--border); }
+    .stat-box .stat-num { font-size: 36px; font-weight: 800; line-height: 1; margin-bottom: 6px; }
+    .stat-box .stat-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); font-weight: 600; }
+    .stat-box.success .stat-num { color: var(--green); }
+    .stat-box.error .stat-num { color: var(--red); }
+    .stat-box.total .stat-num { color: var(--accent); }
+    .log-list { max-height: 200px; overflow-y: auto; background: var(--surface2); border-radius: 10px; padding: 12px; }
+    .log-list::-webkit-scrollbar { width: 4px; }
+    .log-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .log-item { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-family: 'DM Mono', monospace; font-size: 12px; }
+    .log-item:last-child { border-bottom: none; }
+    .log-item .log-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .log-item.ok .log-dot { background: var(--green); }
+    .log-item.fail .log-dot { background: var(--red); }
+    .log-item .log-phone { color: var(--text); }
+    .log-item .log-status { color: var(--muted); margin-left: auto; }
+    .log-item.fail .log-status { color: var(--red); }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+  <div class="logo-mark">
+    <div class="logo-icon">💬</div>
+    <div class="logo-text">OC332 <span>Disparador</span></div>
+  </div>
+  <div class="login-card">
+    <h1>Acesso restrito</h1>
+    <p>Digite a senha para continuar</p>
+    <div class="field-group">
+      <label>Senha</label>
+      <input type="password" id="senha-input" placeholder="••••••" onkeydown="if(event.key==='Enter') fazerLogin()">
+    </div>
+    <button class="btn btn-primary" onclick="fazerLogin()">Entrar</button>
+    <div class="error-msg" id="login-error">Senha incorreta. Tente novamente.</div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="app-screen">
+  <div class="app-header">
+    <div class="logo-mark">
+      <div class="logo-icon">💬</div>
+      <div class="logo-text">OC332 <span>Disparador</span></div>
+    </div>
+    <button class="logout-btn" onclick="fazerLogout()">Sair</button>
+  </div>
+
+  <div class="card">
+    <div class="card-title">📋 Lista de contatos</div>
+    <div class="upload-zone" id="upload-zone">
+      <input type="file" id="file-input" accept=".xlsx,.xls,.csv" onchange="processarArquivo(event)">
+      <div class="upload-icon">📁</div>
+      <p><strong>Clique ou arraste</strong> um arquivo aqui</p>
+      <p>Excel (.xlsx, .xls) ou CSV — coluna: <code>telefone</code></p>
+    </div>
+    <div class="file-loaded" id="file-loaded">
+      <div style="font-size:20px">✅</div>
+      <div class="file-info">
+        <div class="file-name" id="file-name"></div>
+        <div class="file-count" id="file-count"></div>
+      </div>
+      <button class="remove-file" onclick="removerArquivo()">✕</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">📨 Template</div>
+    <div class="template-row">
+      <div class="field-group">
+        <label>Selecione o template aprovado</label>
+        <select id="template-select" onchange="previewTemplate()">
+          <option value="">— carregando templates... —</option>
+        </select>
+      </div>
+      <button class="refresh-btn" id="refresh-btn" onclick="carregarTemplates()" title="Atualizar">↻</button>
+    </div>
+    <div class="template-preview" id="template-preview"></div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">🚀 Disparo</div>
+    <button class="disparo-btn" id="disparo-btn" onclick="iniciarDisparo()" disabled>
+      <span>⚡</span> Iniciar Disparo
+    </button>
+    <div class="progress-wrap" id="progress-wrap">
+      <div class="progress-bar-bg"><div class="progress-bar-fill" id="progress-fill"></div></div>
+      <div class="progress-label" id="progress-label">Aguardando...</div>
+    </div>
+  </div>
+
+  <div class="card" id="resumo-card">
+    <div class="card-title">📊 Resumo do disparo</div>
+    <div class="stats-grid">
+      <div class="stat-box total"><div class="stat-num" id="stat-total">0</div><div class="stat-label">Total</div></div>
+      <div class="stat-box success"><div class="stat-num" id="stat-ok">0</div><div class="stat-label">Enviados</div></div>
+      <div class="stat-box error"><div class="stat-num" id="stat-err">0</div><div class="stat-label">Erros</div></div>
+    </div>
+    <div class="log-list" id="log-list"></div>
+    <button class="btn btn-secondary" onclick="novoDisparo()" style="margin-top:16px">+ Novo disparo</button>
+  </div>
+</div>
+
+<script>
+  const SENHA = '579500';
+  const N8N_BASE = 'https://crepusculargreatwhiteshark-n8n.cloudfy.live/webhook';
+  const WEBHOOK_TEMPLATES = `${N8N_BASE}/buscar-templates`;
+  const WEBHOOK_DISPARO   = `${N8N_BASE}/disparador-oficial`;
+
+  let listaContatos = [];
+  let templatesCache = [];
+
+  function fazerLogin() {
+    const val = document.getElementById('senha-input').value;
+    const err = document.getElementById('login-error');
+    if (val === SENHA) {
+      document.getElementById('login-screen').style.display = 'none';
+      document.getElementById('app-screen').style.display = 'block';
+      carregarTemplates();
+    } else {
+      err.style.display = 'block';
+      document.getElementById('senha-input').value = '';
+      setTimeout(() => err.style.display = 'none', 3000);
+    }
+  }
+
+  function fazerLogout() {
+    document.getElementById('app-screen').style.display = 'none';
+    document.getElementById('login-screen').style.display = 'block';
+    document.getElementById('senha-input').value = '';
+  }
+
+  function processarArquivo(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: 'binary' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        const colTel = Object.keys(data[0] || {}).find(k =>
+          k.toLowerCase().includes('telefone') || k.toLowerCase().includes('phone') || k.toLowerCase() === 'tel'
+        );
+        if (!colTel) { alert('Coluna "telefone" não encontrada.'); return; }
+        listaContatos = data
+          .map(row => ({ telefone: limparTelefone(String(row[colTel])) }))
+          .filter(r => r.telefone.length >= 12);
+        document.getElementById('file-name').textContent = file.name;
+        document.getElementById('file-count').textContent = `${listaContatos.length} números válidos encontrados`;
+        document.getElementById('file-loaded').classList.add('show');
+        document.getElementById('upload-zone').style.display = 'none';
+        verificarBotao();
+      } catch(err) { alert('Erro ao ler o arquivo: ' + err.message); }
+    };
+    reader.readAsBinaryString(file);
+  }
+
+  function limparTelefone(tel) {
+    let t = tel.replace(/\D/g, '');
+    if (t.startsWith('0')) t = t.substring(1);
+    if (!t.startsWith('55')) t = '55' + t;
+    return t;
+  }
+
+  function removerArquivo() {
+    listaContatos = [];
+    document.getElementById('file-loaded').classList.remove('show');
+    document.getElementById('upload-zone').style.display = 'block';
+    document.getElementById('file-input').value = '';
+    verificarBotao();
+  }
+
+  async function carregarTemplates() {
+    const sel = document.getElementById('template-select');
+    const btn = document.getElementById('refresh-btn');
+    btn.classList.add('spinning');
+    sel.innerHTML = '<option value="">— buscando templates... —</option>';
+    try {
+      const res = await fetch(WEBHOOK_TEMPLATES);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const raw = await res.json();
+
+      // Normaliza resposta do n8n — pode vir como array de items ou direto
+      let templates = [];
+      if (Array.isArray(raw)) {
+        const first = raw[0];
+        if (first?.data) templates = first.data;
+        else if (first?.json?.data) templates = first.json.data;
+        else templates = raw;
+      } else if (raw?.data) {
+        templates = raw.data;
+      }
+
+      const aprovados = templates.filter(t => (t.status || '').toUpperCase() === 'APPROVED');
+      templatesCache = aprovados;
+
+      sel.innerHTML = aprovados.length === 0
+        ? '<option value="">Nenhum template aprovado encontrado</option>'
+        : '<option value="">— selecione um template —</option>' +
+          aprovados.map(t => `<option value="${t.name}" data-lang="${t.language || 'pt_BR'}">${t.name} (${t.language || ''})</option>`).join('');
+
+      document.getElementById('template-preview').classList.remove('show');
+      verificarBotao();
+    } catch(err) {
+      sel.innerHTML = '<option value="">Erro ao carregar — tente novamente</option>';
+      console.error('Erro templates:', err);
+    } finally {
+      btn.classList.remove('spinning');
+    }
+  }
+
+  function previewTemplate() {
+    const sel = document.getElementById('template-select');
+    const preview = document.getElementById('template-preview');
+    const val = sel.value;
+    if (!val) { preview.classList.remove('show'); verificarBotao(); return; }
+    const tpl = templatesCache.find(t => t.name === val);
+    if (tpl) {
+      preview.innerHTML = `<span class="tpl-name">${tpl.name}</span> · <span class="tpl-lang">${tpl.language || 'pt_BR'}</span> · <span style="color:var(--yellow)">✓ Aprovado</span>`;
+      preview.classList.add('show');
+    }
+    verificarBotao();
+  }
+
+  function verificarBotao() {
+    const template = document.getElementById('template-select').value;
+    document.getElementById('disparo-btn').disabled = !(listaContatos.length > 0 && template);
+  }
+
+  async function iniciarDisparo() {
+    const template = document.getElementById('template-select').value;
+    if (!template || listaContatos.length === 0) return;
+    document.getElementById('disparo-btn').disabled = true;
+    document.getElementById('resumo-card').classList.remove('show');
+    document.getElementById('progress-wrap').classList.add('show');
+    document.getElementById('log-list').innerHTML = '';
+
+    const tpl = templatesCache.find(t => t.name === template);
+    const lang = tpl?.language || 'pt_BR';
+    const total = listaContatos.length;
+    let ok = 0, erros = 0;
+    const logs = [];
+
+    for (let i = 0; i < total; i++) {
+      const contato = listaContatos[i];
+      const pct = Math.round(((i + 1) / total) * 100);
+      document.getElementById('progress-fill').style.width = pct + '%';
+      document.getElementById('progress-label').textContent = `Enviando ${i + 1} de ${total} (${pct}%)`;
+      try {
+        const res = await fetch(WEBHOOK_DISPARO, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template, language: lang, lista: [{ telefone: contato.telefone }] })
+        });
+        if (res.ok) { ok++; logs.push({ tel: contato.telefone, ok: true }); }
+        else { erros++; logs.push({ tel: contato.telefone, ok: false, msg: `HTTP ${res.status}` }); }
+      } catch(e) {
+        erros++;
+        logs.push({ tel: contato.telefone, ok: false, msg: 'Erro de rede' });
+      }
+      if (i < total - 1) await sleep(350);
+    }
+    mostrarResumo(total, ok, erros, logs);
+  }
+
+  function mostrarResumo(total, ok, erros, logs) {
+    document.getElementById('progress-wrap').classList.remove('show');
+    document.getElementById('stat-total').textContent = total;
+    document.getElementById('stat-ok').textContent = ok;
+    document.getElementById('stat-err').textContent = erros;
+    document.getElementById('log-list').innerHTML = logs.map(l =>
+      `<div class="log-item ${l.ok ? 'ok' : 'fail'}">
+        <div class="log-dot"></div>
+        <div class="log-phone">${formatarTel(l.tel)}</div>
+        <div class="log-status">${l.ok ? 'enviado' : (l.msg || 'erro')}</div>
+      </div>`
+    ).join('');
+    document.getElementById('resumo-card').classList.add('show');
+    document.getElementById('disparo-btn').disabled = false;
+  }
+
+  function novoDisparo() {
+    removerArquivo();
+    document.getElementById('resumo-card').classList.remove('show');
+    document.getElementById('template-select').value = '';
+    document.getElementById('template-preview').classList.remove('show');
+    verificarBotao();
+  }
+
+  function formatarTel(tel) {
+    if (tel.length === 13) return `+${tel.slice(0,2)} (${tel.slice(2,4)}) ${tel.slice(4,9)}-${tel.slice(9)}`;
+    return tel;
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  const zone = document.getElementById('upload-zone');
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) processarArquivo({ target: { files: [file] } });
+  });
+</script>
+</body>
+</html>
