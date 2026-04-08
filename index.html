@@ -218,6 +218,7 @@
 
   <div class="card" id="resumo-card">
     <div class="card-title">📊 Resumo do disparo</div>
+    <div id="sync-banner"></div>
     <div class="stats-grid">
       <div class="stat-box total"><div class="stat-num" id="stat-total">0</div><div class="stat-label">Total</div></div>
       <div class="stat-box success"><div class="stat-num" id="stat-ok">0</div><div class="stat-label">Enviados</div></div>
@@ -233,7 +234,8 @@
   const N8N_BASE = 'https://crepusculargreatwhiteshark-n8n.cloudfy.live/webhook';
   const WEBHOOK_TEMPLATES = `${N8N_BASE}/buscar-templates`;
   const WEBHOOK_DISPARO   = `${N8N_BASE}/disparador-oficial`;
-
+  const ORTHO_SYNC_URL    = 'https://cobranca.oc332.com.br/api/sync/disparo';
+  const ORTHO_API_KEY = 'CGqRnaPIbXi6ScRgxE3pHZK8Usaev8AT';
   let listaContatos = [];
   let templatesCache = [];
   let devedoresCache = []; // dados completos para sync OrthoCobranca
@@ -465,51 +467,112 @@
   async function iniciarDisparo() {
     const template = document.getElementById('template-select').value;
     if (!template || listaContatos.length === 0) return;
+
     document.getElementById('disparo-btn').disabled = true;
     document.getElementById('resumo-card').classList.remove('show');
     document.getElementById('progress-wrap').classList.add('show');
     document.getElementById('log-list').innerHTML = '';
+    document.getElementById('progress-fill').style.width = '0%';
+    document.getElementById('progress-label').textContent = 'Preparando...';
 
     const tpl = templatesCache.find(t => t.name === template);
     const lang = tpl?.language || 'pt_BR';
     const total = listaContatos.length;
-    let ok = 0, erros = 0;
+    let syncStatus = null; // 'ok' | 'erro'
+
+    // ── ETAPA 1: Duas chamadas simultâneas antes do loop ──────────────────
+    document.getElementById('progress-label').textContent = 'Sincronizando devedores e disparando...';
+
+    const [resN8n, resSync] = await Promise.allSettled([
+      // Chamada 1 → n8n: lista completa de telefones
+      fetch(WEBHOOK_DISPARO, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          template,
+          language: lang,
+          lista: listaContatos.map(c => ({ telefone: c.telefone }))
+        })
+      }),
+      // Chamada 2 → OrthoCobranca: dados completos para sync
+      fetch(ORTHO_SYNC_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': ORTHO_API_KEY
+        },
+        body: JSON.stringify({
+          devedores: devedoresCache,
+          disparadoEm: new Date().toISOString()
+        })
+      })
+    ]);
+
+    // Avalia resultado do sync
+    if (resSync.status === 'fulfilled' && resSync.value.ok) {
+      syncStatus = 'ok';
+    } else {
+      syncStatus = 'erro';
+      const motivo = resSync.reason?.message
+        || (resSync.value ? `HTTP ${resSync.value.status}` : 'desconhecido');
+      console.warn('Sync OrthoCobranca falhou:', motivo);
+    }
+
+    // Avalia resultado do n8n
+    const n8nOk = resN8n.status === 'fulfilled' && resN8n.value.ok;
+
+    // ── ETAPA 2: Loop visual de progresso (simula envio item a item) ──────
     const logs = [];
+    let ok = 0, erros = 0;
 
     for (let i = 0; i < total; i++) {
       const contato = listaContatos[i];
       const pct = Math.round(((i + 1) / total) * 100);
       document.getElementById('progress-fill').style.width = pct + '%';
-      document.getElementById('progress-label').textContent = `Enviando ${i + 1} de ${total} (${pct}%)`;
-      try {
-        const res = await fetch(WEBHOOK_DISPARO, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ template, language: lang, lista: [{ telefone: contato.telefone }] })
-        });
-        if (res.ok) { ok++; logs.push({ tel: contato.telefone, ok: true }); }
-        else { erros++; logs.push({ tel: contato.telefone, ok: false, msg: `HTTP ${res.status}` }); }
-      } catch(e) {
+      document.getElementById('progress-label').textContent = `Processando ${i + 1} de ${total} (${pct}%)`;
+
+      if (n8nOk) {
+        ok++;
+        logs.push({ tel: contato.telefone, nome: contato.nome, ok: true });
+      } else {
         erros++;
-        logs.push({ tel: contato.telefone, ok: false, msg: 'Erro de rede' });
+        const motivo = resN8n.reason?.message
+          || (resN8n.value ? `HTTP ${resN8n.value.status}` : 'erro');
+        logs.push({ tel: contato.telefone, nome: contato.nome, ok: false, msg: motivo });
       }
-      if (i < total - 1) await sleep(350);
+      await sleep(30); // delay mínimo só para animar a barra
     }
-    mostrarResumo(total, ok, erros, logs);
+
+    mostrarResumo(total, ok, erros, logs, syncStatus);
   }
 
-  function mostrarResumo(total, ok, erros, logs) {
+  function mostrarResumo(total, ok, erros, logs, syncStatus) {
     document.getElementById('progress-wrap').classList.remove('show');
     document.getElementById('stat-total').textContent = total;
     document.getElementById('stat-ok').textContent = ok;
     document.getElementById('stat-err').textContent = erros;
+
+    // Banner de status do sync
+    const syncBanner = syncStatus === 'ok'
+      ? `<div style="display:flex;align-items:center;gap:8px;background:rgba(37,211,102,0.1);border:1px solid rgba(37,211,102,0.3);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-family:'DM Mono',monospace;font-size:12px;color:var(--green)">
+           ✅ Devedores sincronizados no OrthoCobranca
+         </div>`
+      : syncStatus === 'erro'
+      ? `<div style="display:flex;align-items:center;gap:8px;background:rgba(255,77,77,0.08);border:1px solid rgba(255,77,77,0.3);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-family:'DM Mono',monospace;font-size:12px;color:var(--red)">
+           ⚠️ Disparo enviado, mas sync com OrthoCobranca falhou. Verifique manualmente.
+         </div>`
+      : '';
+
+    document.getElementById('sync-banner').innerHTML = syncBanner;
+
     document.getElementById('log-list').innerHTML = logs.map(l =>
       `<div class="log-item ${l.ok ? 'ok' : 'fail'}">
         <div class="log-dot"></div>
-        <div class="log-phone">${formatarTel(l.tel)}</div>
+        <div class="log-phone">${l.nome ? `<span style="color:var(--muted);margin-right:6px">${l.nome.split(' ')[0]}</span>` : ''}${formatarTel(l.tel)}</div>
         <div class="log-status">${l.ok ? 'enviado' : (l.msg || 'erro')}</div>
       </div>`
     ).join('');
+
     document.getElementById('resumo-card').classList.add('show');
     document.getElementById('disparo-btn').disabled = false;
   }
