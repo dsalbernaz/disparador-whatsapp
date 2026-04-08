@@ -100,6 +100,26 @@
     .log-item.fail .log-status { color: var(--red); }
     @keyframes fadeUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }
     @keyframes spin { to { transform: rotate(360deg); } }
+    /* Preview table */
+    #preview-card { display: none; }
+    #preview-card.show { display: block; }
+    .preview-table-wrap { overflow-x: auto; max-height: 280px; overflow-y: auto; border-radius: 10px; }
+    .preview-table-wrap::-webkit-scrollbar { width: 4px; height: 4px; }
+    .preview-table-wrap::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .preview-table { width: 100%; border-collapse: collapse; font-family: 'DM Mono', monospace; font-size: 12px; }
+    .preview-table th { background: var(--surface2); color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 1px; padding: 8px 12px; text-align: left; position: sticky; top: 0; z-index: 1; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .preview-table td { padding: 7px 12px; border-bottom: 1px solid rgba(42,42,58,0.6); color: var(--text); vertical-align: middle; white-space: nowrap; }
+    .preview-table tr:last-child td { border-bottom: none; }
+    .preview-table tr:hover td { background: rgba(124,107,255,0.04); }
+    .preview-table .td-nome { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+    .preview-table .td-sit { }
+    .badge-sit { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; }
+    .badge-sit.protestar { background: rgba(255,77,77,0.15); color: var(--red); }
+    .badge-sit.tratamento { background: rgba(37,211,102,0.12); color: var(--green); }
+    .badge-sit.cancelado { background: rgba(245,197,66,0.12); color: var(--yellow); }
+    .badge-sit.other { background: rgba(124,107,255,0.12); color: var(--accent); }
+    .td-tels { color: var(--muted); }
+    .td-tels span { display: inline-block; background: var(--surface2); border-radius: 4px; padding: 1px 6px; margin: 1px 2px; font-size: 11px; }
   </style>
 </head>
 <body>
@@ -150,6 +170,27 @@
     </div>
   </div>
 
+  <!-- PREVIEW DA PLANILHA -->
+  <div class="card" id="preview-card">
+    <div class="card-title">🔍 Preview dos dados</div>
+    <div class="preview-table-wrap">
+      <table class="preview-table" id="preview-table">
+        <thead>
+          <tr>
+            <th>Cód</th>
+            <th>Paciente</th>
+            <th>CPF</th>
+            <th>Parcelas</th>
+            <th>Total Atraso</th>
+            <th>Situação</th>
+            <th>Telefones</th>
+          </tr>
+        </thead>
+        <tbody id="preview-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-title">📨 Template</div>
     <div class="template-row">
@@ -195,6 +236,7 @@
 
   let listaContatos = [];
   let templatesCache = [];
+  let devedoresCache = []; // dados completos para sync OrthoCobranca
 
   async function checarSenha(val) {
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(val));
@@ -230,36 +272,136 @@
       try {
         const wb = XLSX.read(e.target.result, { type: 'binary' });
         const ws = wb.Sheets[wb.SheetNames[0]];
-        const data = XLSX.utils.sheet_to_json(ws, { defval: '' });
-        const colTel = Object.keys(data[0] || {}).find(k =>
-          k.toLowerCase().includes('telefone') || k.toLowerCase().includes('phone') || k.toLowerCase() === 'tel'
-        );
-        if (!colTel) { alert('Coluna "telefone" não encontrada.'); return; }
-        listaContatos = data
-          .map(row => ({ telefone: limparTelefone(String(row[colTel])) }))
-          .filter(r => r.telefone.length >= 12);
+
+        // Lê sem cabeçalho (header:1) pois linha 1 é título e linha 2 é cabeçalho real
+        const raw = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+        // Linha 2 (índice 1) = cabeçalhos; dados a partir da linha 3 (índice 2)
+        const headers = raw[1] || [];
+        const rows = raw.slice(2).filter(r => r[0]); // ignora linhas sem Cód
+
+        // Índices das colunas pelo cabeçalho
+        const iCod      = headers.findIndex(h => /^c[oó]d/i.test(String(h)));
+        const iPaciente = headers.findIndex(h => /paciente/i.test(String(h)));
+        const iAtras    = headers.findIndex(h => /atrasad/i.test(String(h)));
+        const iTotAtr   = headers.findIndex(h => /tot.*atraso/i.test(String(h)));
+        const iPrimVcto = headers.findIndex(h => /prim.*vcto|prim.*venc/i.test(String(h)));
+        const iUltPgto  = headers.findIndex(h => /[uú]lt.*pgto|[uú]lt.*pag/i.test(String(h)));
+        const iSituacao = headers.findIndex(h => /situa/i.test(String(h)));
+        const iTelefone = headers.findIndex(h => /telefone/i.test(String(h)));
+
+        if (iTelefone === -1) { alert('Coluna "Telefones" não encontrada. Verifique o arquivo.'); return; }
+
+        // Acumula devedores com lista de telefones explodida (1 entrada por telefone único)
+        devedoresCache = [];
+        listaContatos = [];
+        const telefonesGlobais = new Set();
+
+        for (const row of rows) {
+          const pacienteRaw = String(row[iPaciente] || '');
+          const { nome, cpf } = extrairNomeCPF(pacienteRaw);
+          const telefoneRaw  = String(row[iTelefone] || '');
+          const telefones    = extrairTelefones(telefoneRaw);
+
+          const devedor = {
+            codigoPaciente:        Number(row[iCod]) || 0,
+            nome,
+            cpf,
+            parcelasAtrasadas:     Number(row[iAtras]) || 0,
+            valorTotalAtraso:      parseMoeda(row[iTotAtr]),
+            dataPrimeiroVencimento: parseData(row[iPrimVcto]),
+            dataUltimoPagamento:   parseData(row[iUltPgto]),
+            situacaoSistema:       String(row[iSituacao] || '').trim(),
+            telefonesAlternativos: telefones,
+            telefonePrincipal:     telefones[0] || ''
+          };
+          devedoresCache.push(devedor);
+
+          // Explode: 1 contato por telefone único
+          for (const tel of telefones) {
+            if (!telefonesGlobais.has(tel)) {
+              telefonesGlobais.add(tel);
+              listaContatos.push({ telefone: tel, codigoPaciente: devedor.codigoPaciente, nome: devedor.nome });
+            }
+          }
+        }
+
         document.getElementById('file-name').textContent = file.name;
-        document.getElementById('file-count').textContent = `${listaContatos.length} números válidos encontrados`;
+        document.getElementById('file-count').textContent =
+          `${rows.length} pacientes · ${listaContatos.length} números únicos`;
         document.getElementById('file-loaded').classList.add('show');
         document.getElementById('upload-zone').style.display = 'none';
+        renderizarPreview();
         verificarBotao();
-      } catch(err) { alert('Erro ao ler o arquivo: ' + err.message); }
+      } catch(err) { alert('Erro ao ler o arquivo: ' + err.message); console.error(err); }
     };
     reader.readAsBinaryString(file);
+  }
+
+  // Extrai todos os telefones brasileiros de uma célula (separa por espaço, vírgula, ; ou quebra)
+  function extrairTelefones(raw) {
+    const regex = /(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)(?:9\s?)?\d{4}[-\s]?\d{4}/g;
+    const matches = raw.match(regex) || [];
+    const unicos = new Set();
+    return matches
+      .map(m => limparTelefone(m))
+      .filter(t => {
+        if (t.length < 12 || unicos.has(t)) return false;
+        unicos.add(t); return true;
+      });
+  }
+
+  // Separa "João Silva CPF: 12345678900" → { nome, cpf }
+  function extrairNomeCPF(raw) {
+    const match = raw.match(/^(.*?)\s*CPF[:\s]*(\d[\d.\-\/]+\d)/i);
+    if (match) {
+      return {
+        nome: match[1].trim(),
+        cpf: match[2].replace(/\D/g, '')
+      };
+    }
+    return { nome: raw.trim(), cpf: '' };
   }
 
   function limparTelefone(tel) {
     let t = tel.replace(/\D/g, '');
     if (t.startsWith('0')) t = t.substring(1);
     if (!t.startsWith('55')) t = '55' + t;
+    // Garante 9º dígito em celulares de SP (11 + 8 dígitos → insere 9)
+    if (t.length === 12 && t.startsWith('55')) {
+      const ddd = t.slice(2, 4);
+      const num = t.slice(4);
+      if (num.length === 8 && !num.startsWith('9')) t = '55' + ddd + '9' + num;
+    }
     return t;
+  }
+
+  function parseMoeda(val) {
+    if (!val) return 0;
+    return parseFloat(String(val).replace(/[^\d,\.]/g, '').replace(',', '.')) || 0;
+  }
+
+  function parseData(val) {
+    if (!val) return null;
+    // Se já é número (serial Excel) ou string dd/mm/yyyy
+    if (typeof val === 'number') {
+      const d = XLSX.SSF.parse_date_code(val);
+      if (d) return `${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+    }
+    const s = String(val).trim();
+    const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+    return s || null;
   }
 
   function removerArquivo() {
     listaContatos = [];
+    devedoresCache = [];
     document.getElementById('file-loaded').classList.remove('show');
     document.getElementById('upload-zone').style.display = 'block';
     document.getElementById('file-input').value = '';
+    document.getElementById('preview-card').classList.remove('show');
+    document.getElementById('preview-tbody').innerHTML = '';
     verificarBotao();
   }
 
@@ -378,6 +520,31 @@
     document.getElementById('template-select').value = '';
     document.getElementById('template-preview').classList.remove('show');
     verificarBotao();
+  }
+
+  function renderizarPreview() {
+    const tbody = document.getElementById('preview-tbody');
+    tbody.innerHTML = devedoresCache.map(d => {
+      const sitClass = /protestar/i.test(d.situacaoSistema) ? 'protestar'
+                     : /tratamento/i.test(d.situacaoSistema) ? 'tratamento'
+                     : /cancelado/i.test(d.situacaoSistema) ? 'cancelado'
+                     : 'other';
+      const telsHtml = d.telefonesAlternativos
+        .map(t => `<span>${formatarTel(t)}</span>`).join('');
+      const valor = d.valorTotalAtraso
+        ? 'R$ ' + d.valorTotalAtraso.toFixed(2).replace('.', ',')
+        : '—';
+      return `<tr>
+        <td>${d.codigoPaciente}</td>
+        <td class="td-nome" title="${d.nome}">${d.nome}</td>
+        <td>${d.cpf ? d.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4') : '—'}</td>
+        <td style="text-align:center">${d.parcelasAtrasadas}</td>
+        <td>${valor}</td>
+        <td class="td-sit"><span class="badge-sit ${sitClass}">${d.situacaoSistema || '—'}</span></td>
+        <td class="td-tels">${telsHtml || '—'}</td>
+      </tr>`;
+    }).join('');
+    document.getElementById('preview-card').classList.add('show');
   }
 
   function formatarTel(tel) {
