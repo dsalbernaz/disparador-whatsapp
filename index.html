@@ -207,6 +207,16 @@
 
   <div class="card">
     <div class="card-title">🚀 Disparo</div>
+    <div class="field-group" style="margin-bottom:16px">
+      <label>Campanha</label>
+      <select id="campanha-select" onchange="verificarBotao()">
+        <option value="">— selecione a campanha —</option>
+        <option value="2_parcelas">2 parcelas em atraso</option>
+        <option value="3_parcelas">3 parcelas em atraso</option>
+        <option value="4_mais_parcelas">4+ parcelas em atraso</option>
+        <option value="teste">Teste</option>
+      </select>
+    </div>
     <button class="disparo-btn" id="disparo-btn" onclick="iniciarDisparo()" disabled>
       <span>⚡</span> Iniciar Disparo
     </button>
@@ -478,12 +488,14 @@
 
   function verificarBotao() {
     const template = document.getElementById('template-select').value;
-    document.getElementById('disparo-btn').disabled = !(listaContatos.length > 0 && template);
+    const campanha = document.getElementById('campanha-select').value;
+    document.getElementById('disparo-btn').disabled = !(listaContatos.length > 0 && template && campanha);
   }
 
   async function iniciarDisparo() {
     const template = document.getElementById('template-select').value;
-    if (!template || listaContatos.length === 0) return;
+    const campanha = document.getElementById('campanha-select').value;
+    if (!template || !campanha || listaContatos.length === 0) return;
 
     document.getElementById('disparo-btn').disabled = true;
     document.getElementById('resumo-card').classList.remove('show');
@@ -508,6 +520,7 @@
         body: JSON.stringify({
           template,
           language: lang,
+          campanha,
           jobId,
           callbackUrl: ORTHO_PROGRESSO_URL,
           lista: listaContatos.map(c => ({ telefone: c.telefone, codigoPaciente: c.codigoPaciente }))
@@ -516,7 +529,7 @@
       fetch(ORTHO_SYNC_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': ORTHO_API_KEY },
-        body: JSON.stringify({ devedores: devedoresCache, disparadoEm: new Date().toISOString() })
+        body: JSON.stringify({ devedores: devedoresCache, campanha, disparadoEm: new Date().toISOString() })
       })
     ]);
 
@@ -643,6 +656,7 @@
     document.getElementById('resumo-card').classList.remove('show');
     document.getElementById('template-select').value = '';
     document.getElementById('template-preview').classList.remove('show');
+    document.getElementById('campanha-select').value = '';
     verificarBotao();
   }
 
