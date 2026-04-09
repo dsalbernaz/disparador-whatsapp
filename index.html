@@ -552,12 +552,15 @@
     const POLL_INTERVAL = 2000;
     const start = Date.now();
     let jobEncontrado = false;
+    let pollingAtivo = true;
     const logMap = {}; // telefone → status
 
-    const poll = setInterval(async () => {
+    async function pollProgresso() {
+      if (!pollingAtivo) return;
+
       // Timeout global
       if (Date.now() - start > TIMEOUT_MS) {
-        clearInterval(poll);
+        pollingAtivo = false;
         mostrarResumo(total, Object.values(logMap).filter(v => v.ok).length,
           Object.values(logMap).filter(v => !v.ok).length,
           listaContatos.map(c => logMap[c.telefone] || { tel: c.telefone, nome: c.nome, ok: false, msg: 'timeout' }),
@@ -570,18 +573,24 @@
           headers: { 'x-api-key': ORTHO_API_KEY }
         });
 
-        // Job ainda não criado no servidor (n8n não enviou nenhum item ainda)
+        // Job ainda não criado no servidor
         if (res.status === 404) {
           if (!jobEncontrado && Date.now() - start > 30000) {
-            clearInterval(poll);
+            pollingAtivo = false;
             mostrarResumo(total, 0, total,
               listaContatos.map(c => ({ tel: c.telefone, nome: c.nome, ok: false, msg: 'n8n não respondeu' })),
               syncStatus);
+            return;
           }
+          setTimeout(pollProgresso, POLL_INTERVAL);
           return;
         }
 
-        if (!res.ok) return;
+        if (!res.ok) {
+          setTimeout(pollProgresso, POLL_INTERVAL);
+          return;
+        }
+
         jobEncontrado = true;
         const data = await res.json();
 
@@ -607,17 +616,24 @@
 
         // Concluído
         if (data.concluido) {
-          clearInterval(poll);
+          pollingAtivo = false;
           const logs = listaContatos.map(c =>
             logMap[c.telefone] || { tel: c.telefone, nome: c.nome, ok: false, msg: 'não processado' }
           );
           mostrarResumo(data.total, data.ok, data.erro, logs, syncStatus);
+          return;
         }
 
       } catch(e) {
         console.warn('Erro no polling:', e.message);
       }
-    }, POLL_INTERVAL);
+
+      // Agenda próxima iteração só após concluir a atual
+      setTimeout(pollProgresso, POLL_INTERVAL);
+    }
+
+    // Inicia o polling
+    setTimeout(pollProgresso, POLL_INTERVAL);
   }
 
   function mostrarResumo(total, ok, erros, logs, syncStatus) {
