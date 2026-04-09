@@ -235,6 +235,7 @@
   const WEBHOOK_TEMPLATES = `${N8N_BASE}/buscar-templates`;
   const WEBHOOK_DISPARO   = `${N8N_BASE}/disparador-oficial`;
   const ORTHO_SYNC_URL    = 'https://cobranca.oc332.com.br/api/sync/disparo';
+  const ORTHO_PROGRESSO_URL = 'https://cobranca.oc332.com.br/api/sync/progresso';
   const ORTHO_API_KEY = 'CGqRnaPIbXi6ScRgxE3pHZK8Usaev8AT';
   let listaContatos = [];
   let templatesCache = [];
@@ -478,72 +479,116 @@
     const tpl = templatesCache.find(t => t.name === template);
     const lang = tpl?.language || 'pt_BR';
     const total = listaContatos.length;
-    let syncStatus = null; // 'ok' | 'erro'
+    const jobId = crypto.randomUUID();
+    let syncStatus = null;
 
-    // ── ETAPA 1: Duas chamadas simultâneas antes do loop ──────────────────
+    // ── ETAPA 1: Duas chamadas simultâneas ────────────────────────────────
     document.getElementById('progress-label').textContent = 'Sincronizando devedores e disparando...';
 
     const [resN8n, resSync] = await Promise.allSettled([
-      // Chamada 1 → n8n: lista completa de telefones
       fetch(WEBHOOK_DISPARO, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           template,
           language: lang,
-          lista: listaContatos.map(c => ({ telefone: c.telefone }))
+          jobId,
+          callbackUrl: ORTHO_PROGRESSO_URL,
+          lista: listaContatos.map(c => ({ telefone: c.telefone, codigoPaciente: c.codigoPaciente }))
         })
       }),
-      // Chamada 2 → OrthoCobranca: dados completos para sync
       fetch(ORTHO_SYNC_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ORTHO_API_KEY
-        },
-        body: JSON.stringify({
-          devedores: devedoresCache,
-          disparadoEm: new Date().toISOString()
-        })
+        headers: { 'Content-Type': 'application/json', 'x-api-key': ORTHO_API_KEY },
+        body: JSON.stringify({ devedores: devedoresCache, disparadoEm: new Date().toISOString() })
       })
     ]);
 
-    // Avalia resultado do sync
-    if (resSync.status === 'fulfilled' && resSync.value.ok) {
-      syncStatus = 'ok';
-    } else {
-      syncStatus = 'erro';
-      const motivo = resSync.reason?.message
-        || (resSync.value ? `HTTP ${resSync.value.status}` : 'desconhecido');
-      console.warn('Sync OrthoCobranca falhou:', motivo);
-    }
+    syncStatus = (resSync.status === 'fulfilled' && resSync.value.ok) ? 'ok' : 'erro';
+    if (syncStatus === 'erro') console.warn('Sync falhou:', resSync.reason?.message || resSync.value?.status);
 
-    // Avalia resultado do n8n
     const n8nOk = resN8n.status === 'fulfilled' && resN8n.value.ok;
-
-    // ── ETAPA 2: Loop visual de progresso (simula envio item a item) ──────
-    const logs = [];
-    let ok = 0, erros = 0;
-
-    for (let i = 0; i < total; i++) {
-      const contato = listaContatos[i];
-      const pct = Math.round(((i + 1) / total) * 100);
-      document.getElementById('progress-fill').style.width = pct + '%';
-      document.getElementById('progress-label').textContent = `Processando ${i + 1} de ${total} (${pct}%)`;
-
-      if (n8nOk) {
-        ok++;
-        logs.push({ tel: contato.telefone, nome: contato.nome, ok: true });
-      } else {
-        erros++;
-        const motivo = resN8n.reason?.message
-          || (resN8n.value ? `HTTP ${resN8n.value.status}` : 'erro');
-        logs.push({ tel: contato.telefone, nome: contato.nome, ok: false, msg: motivo });
-      }
-      await sleep(30); // delay mínimo só para animar a barra
+    if (!n8nOk) {
+      const motivo = resN8n.reason?.message || `HTTP ${resN8n.value?.status || 'erro'}`;
+      mostrarResumo(total, 0, total,
+        listaContatos.map(c => ({ tel: c.telefone, nome: c.nome, ok: false, msg: motivo })),
+        syncStatus);
+      return;
     }
 
-    mostrarResumo(total, ok, erros, logs, syncStatus);
+    // ── ETAPA 2: Polling de progresso real ────────────────────────────────
+    document.getElementById('progress-label').textContent = 'Aguardando n8n iniciar processamento...';
+
+    const TIMEOUT_MS = 40 * 60 * 1000; // 40 minutos
+    const POLL_INTERVAL = 2000;
+    const start = Date.now();
+    let jobEncontrado = false;
+    const logMap = {}; // telefone → status
+
+    const poll = setInterval(async () => {
+      // Timeout global
+      if (Date.now() - start > TIMEOUT_MS) {
+        clearInterval(poll);
+        mostrarResumo(total, Object.values(logMap).filter(v => v.ok).length,
+          Object.values(logMap).filter(v => !v.ok).length,
+          listaContatos.map(c => logMap[c.telefone] || { tel: c.telefone, nome: c.nome, ok: false, msg: 'timeout' }),
+          syncStatus);
+        return;
+      }
+
+      try {
+        const res = await fetch(`${ORTHO_PROGRESSO_URL}?jobId=${jobId}`, {
+          headers: { 'x-api-key': ORTHO_API_KEY }
+        });
+
+        // Job ainda não criado no servidor (n8n não enviou nenhum item ainda)
+        if (res.status === 404) {
+          if (!jobEncontrado && Date.now() - start > 30000) {
+            clearInterval(poll);
+            mostrarResumo(total, 0, total,
+              listaContatos.map(c => ({ tel: c.telefone, nome: c.nome, ok: false, msg: 'n8n não respondeu' })),
+              syncStatus);
+          }
+          return;
+        }
+
+        if (!res.ok) return;
+        jobEncontrado = true;
+        const data = await res.json();
+
+        // Atualiza barra
+        const pct = data.total > 0 ? Math.round((data.processados / data.total) * 100) : 0;
+        document.getElementById('progress-fill').style.width = pct + '%';
+        document.getElementById('progress-label').textContent =
+          `Processando ${data.processados} de ${data.total} (${pct}%) · ✓ ${data.ok} · ✗ ${data.erro}`;
+
+        // Atualiza log em tempo real
+        if (data.itens) {
+          for (const item of data.itens) {
+            logMap[item.telefone] = { tel: item.telefone, nome: item.nome || '', ok: item.status === 'ok', msg: item.status !== 'ok' ? item.status : '' };
+          }
+          document.getElementById('log-list').innerHTML = Object.values(logMap).map(l =>
+            `<div class="log-item ${l.ok ? 'ok' : 'fail'}">
+              <div class="log-dot"></div>
+              <div class="log-phone">${l.nome ? `<span style="color:var(--muted);margin-right:6px">${l.nome.split(' ')[0]}</span>` : ''}${formatarTel(l.tel)}</div>
+              <div class="log-status">${l.ok ? 'enviado' : (l.msg || 'erro')}</div>
+            </div>`
+          ).join('');
+        }
+
+        // Concluído
+        if (data.concluido) {
+          clearInterval(poll);
+          const logs = listaContatos.map(c =>
+            logMap[c.telefone] || { tel: c.telefone, nome: c.nome, ok: false, msg: 'não processado' }
+          );
+          mostrarResumo(data.total, data.ok, data.erro, logs, syncStatus);
+        }
+
+      } catch(e) {
+        console.warn('Erro no polling:', e.message);
+      }
+    }, POLL_INTERVAL);
   }
 
   function mostrarResumo(total, ok, erros, logs, syncStatus) {
