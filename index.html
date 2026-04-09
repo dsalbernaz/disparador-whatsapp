@@ -435,7 +435,10 @@
       sel.innerHTML = aprovados.length === 0
         ? '<option value="">Nenhum template aprovado encontrado</option>'
         : '<option value="">— selecione um template —</option>' +
-          aprovados.map(t => `<option value="${t.name}" data-lang="${t.language || 'pt_BR'}">${t.name} (${t.language || ''})</option>`).join('');
+          aprovados.map(t => {
+            const cat = (t.category || '').toUpperCase() === 'UTILITY' ? 'Utilidade' : 'Marketing';
+            return `<option value="${t.name}" data-lang="${t.language || 'pt_BR'}" data-category="${t.category || ''}">${t.name} · ${t.language || 'pt_BR'} · [${cat}]</option>`;
+          }).join('');
 
       document.getElementById('template-preview').classList.remove('show');
       verificarBotao();
@@ -454,7 +457,20 @@
     if (!val) { preview.classList.remove('show'); verificarBotao(); return; }
     const tpl = templatesCache.find(t => t.name === val);
     if (tpl) {
-      preview.innerHTML = `<span class="tpl-name">${tpl.name}</span> · <span class="tpl-lang">${tpl.language || 'pt_BR'}</span> · <span style="color:var(--yellow)">✓ Aprovado</span>`;
+      const catRaw = (tpl.category || '').toUpperCase();
+      const catLabel = catRaw === 'UTILITY' ? 'Utilidade' : 'Marketing';
+      const catColor = catRaw === 'UTILITY' ? 'var(--accent)' : 'var(--yellow)';
+      const catBg    = catRaw === 'UTILITY' ? 'rgba(124,107,255,0.12)' : 'rgba(245,197,66,0.12)';
+      const bodyText = (tpl.components || []).find(c => c.type === 'BODY')?.text || '';
+      preview.innerHTML = `
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:${bodyText ? '10px' : '0'}">
+          <span class="tpl-name">${tpl.name}</span>
+          <span class="tpl-lang">${tpl.language || 'pt_BR'}</span>
+          <span style="background:${catBg};color:${catColor};padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;letter-spacing:0.5px">${catLabel}</span>
+          <span style="color:var(--green);margin-left:auto">✓ Aprovado</span>
+        </div>
+        ${bodyText ? `<div style="color:var(--text);font-size:12px;line-height:1.6;white-space:pre-wrap">${bodyText}</div>` : ''}
+      `;
       preview.classList.add('show');
     }
     verificarBotao();
